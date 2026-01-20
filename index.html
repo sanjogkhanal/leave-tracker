@@ -89,8 +89,15 @@
                 setLeaveData(data.leaveData || {});
                 setExtraHours(data.extraHours || {});
                 setPublicHolidays(data.publicHolidays || {});
-                if (data.staff && data.staff.length > 0) {
+                // Only set selected staff if it's the first load or if current staff doesn't exist
+                if (isLoading && data.staff && data.staff.length > 0) {
                   setSelectedStaffId(data.staff[0].id);
+                } else if (!isLoading && data.staff) {
+                  // Check if currently selected staff still exists
+                  const staffExists = data.staff.some(s => s.id === selectedStaffId);
+                  if (!staffExists && data.staff.length > 0) {
+                    setSelectedStaffId(data.staff[0].id);
+                  }
                 }
                 setCloudStatus('☁️ Synced');
               } else {
