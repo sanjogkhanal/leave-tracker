@@ -56,6 +56,7 @@
           const [showExtraHoursModal, setShowExtraHoursModal] = useState(false);
           const [isLoading, setIsLoading] = useState(true);
           const [cloudStatus, setCloudStatus] = useState('Connecting...');
+          const [isSyncing, setIsSyncing] = useState(false);
 
           const leaveTypes = {
             annual: { name: 'Annual Leave', color: 'bg-blue-500', maxNepali: 20, maxIntl: 30 },
@@ -85,29 +86,34 @@
             dataRef.on('value', (snapshot) => {
               const data = snapshot.val();
               if (data) {
-                setStaff(data.staff || [{ id: 1, name: 'Staff Member 1', type: 'nepali' }]);
-                setLeaveData(data.leaveData || {});
-                setExtraHours(data.extraHours || {});
-                setPublicHolidays(data.publicHolidays || {});
-                // Only set selected staff if it's the first load or if current staff doesn't exist
-                if (isLoading && data.staff && data.staff.length > 0) {
-                  setSelectedStaffId(data.staff[0].id);
-                } else if (!isLoading && data.staff) {
-                  // Check if currently selected staff still exists
-                  const staffExists = data.staff.some(s => s.id === selectedStaffId);
-                  if (!staffExists && data.staff.length > 0) {
+                // Use a flag to prevent updating when we're the ones making changes
+                if (!isSyncing) {
+                  setStaff(data.staff || [{ id: 1, name: 'Staff Member 1', type: 'nepali' }]);
+                  setLeaveData(data.leaveData || {});
+                  setExtraHours(data.extraHours || {});
+                  setPublicHolidays(data.publicHolidays || {});
+                  
+                  // Only set selected staff on initial load
+                  if (isLoading && data.staff && data.staff.length > 0) {
                     setSelectedStaffId(data.staff[0].id);
+                  } else if (!isLoading && data.staff) {
+                    // Check if currently selected staff still exists
+                    const staffExists = data.staff.some(s => s.id === selectedStaffId);
+                    if (!staffExists && data.staff.length > 0) {
+                      setSelectedStaffId(data.staff[0].id);
+                    }
                   }
                 }
                 setCloudStatus('☁️ Synced');
               } else {
                 // Initialize with default data if database is empty
-                saveToFirebase({
+                setIsSyncing(true);
+                database.ref('leaveTracker').set({
                   staff: [{ id: 1, name: 'Staff Member 1', type: 'nepali' }],
                   leaveData: {},
                   extraHours: {},
                   publicHolidays: {}
-                });
+                }).then(() => setIsSyncing(false));
               }
               setIsLoading(false);
             });
@@ -120,23 +126,32 @@
             if (!database) return;
             
             setCloudStatus('Saving...');
+            setIsSyncing(true);
             database.ref('leaveTracker').set(data)
-              .then(() => setCloudStatus('☁️ Synced'))
+              .then(() => {
+                setCloudStatus('☁️ Synced');
+                setTimeout(() => setIsSyncing(false), 1000);
+              })
               .catch((error) => {
                 console.error('Firebase save error:', error);
                 setCloudStatus('❌ Save failed');
+                setIsSyncing(false);
               });
           };
 
           // Auto-save to Firebase whenever data changes
           useEffect(() => {
             if (!isLoading && database) {
-              saveToFirebase({
-                staff,
-                leaveData,
-                extraHours,
-                publicHolidays
-              });
+              const timeoutId = setTimeout(() => {
+                saveToFirebase({
+                  staff,
+                  leaveData,
+                  extraHours,
+                  publicHolidays
+                });
+              }, 500); // Debounce saves by 500ms
+              
+              return () => clearTimeout(timeoutId);
             }
           }, [staff, leaveData, extraHours, publicHolidays]);
 
