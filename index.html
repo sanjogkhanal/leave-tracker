@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PBI Nepal Leave Tracker</title>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // ⚠️ FIREBASE CONFIGURATION - YOU NEED TO REPLACE THIS
+        // Instructions below to get your own Firebase config
+        const firebaseConfig = {
+  apiKey: "AIzaSyA0JUrWTNcPHcBzeCcpuqa8aCEblY0d46M",
+  authDomain: "pbi-leave-tracker.firebaseapp.com",
+  databaseURL: "https://pbi-leave-tracker-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "pbi-leave-tracker",
+  storageBucket: "pbi-leave-tracker.firebasestorage.app",
+  messagingSenderId: "1052784669724",
+  appId: "1:1052784669724:web:1c0544181a32550e501bd9"
+};
+
+        // Initialize Firebase only if not already initialized
+        let database;
+        try {
+          if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+          }
+          database = firebase.database();
+        } catch (error) {
+          console.error("Firebase initialization error:", error);
+        }
+
+        const PBI_LEAVE_TRACKER = () => {
+          const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
+          const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
+          const [staff, setStaff] = useState([{ id: 1, name: 'Staff Member 1', type: 'nepali' }]);
+          const [selectedStaffId, setSelectedStaffId] = useState(1);
+          const [leaveData, setLeaveData] = useState({});
+          const [extraHours, setExtraHours] = useState({});
+          const [publicHolidays, setPublicHolidays] = useState({});
+          const [showSummary, setShowSummary] = useState(false);
+          const [showStaffManager, setShowStaffManager] = useState(false);
+          const [showHolidayManager, setShowHolidayManager] = useState(false);
+          const [selectedDay, setSelectedDay] = useState(null);
+          const [showExtraHoursModal, setShowExtraHoursModal] = useState(false);
+          const [isLoading, setIsLoading] = useState(true);
+          const [cloudStatus, setCloudStatus] = useState('Connecting...');
+
+          const leaveTypes = {
+            annual: { name: 'Annual Leave', color: 'bg-blue-500', maxNepali: 20, maxIntl: 30 },
+            sick: { name: 'Sick Leave', color: 'bg-red-500', maxNepali: 12, maxIntl: 999 },
+            cultural: { name: 'Cultural Leave', color: 'bg-purple-500', maxNepali: 6, maxIntl: 6 },
+            maternity: { name: 'Maternity Leave', color: 'bg-pink-500', maxNepali: 60, maxIntl: 60 },
+            paternity: { name: 'Paternity Leave', color: 'bg-indigo-500', maxNepali: 15, maxIntl: 15 },
+            bereavement: { name: 'Bereavement/Marriage', color: 'bg-gray-700', maxNepali: 15, maxIntl: 15 },
+            menstrual: { name: 'Menstrual Leave', color: 'bg-rose-400', maxNepali: 36, maxIntl: 36 },
+            training: { name: 'Training Leave', color: 'bg-green-500', maxNepali: 5, maxIntl: 5 },
+            unpaid: { name: 'Unpaid Leave', color: 'bg-yellow-600', maxNepali: 999, maxIntl: 0 },
+            compensation: { name: 'Compensation Leave', color: 'bg-teal-500', maxNepali: 999, maxIntl: 999 }
+          };
+
+          const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+          // Load data from Firebase on component mount
+          useEffect(() => {
+            if (!database) {
+              setCloudStatus('⚠️ Firebase not configured');
+              setIsLoading(false);
+              return;
+            }
+
+            const dataRef = database.ref('leaveTracker');
+            
+            dataRef.on('value', (snapshot) => {
+              const data = snapshot.val();
+              if (data) {
+                setStaff(data.staff || [{ id: 1, name: 'Staff Member 1', type: 'nepali' }]);
+                setLeaveData(data.leaveData || {});
+                setExtraHours(data.extraHours || {});
+                setPublicHolidays(data.publicHolidays || {});
+                if (data.staff && data.staff.length > 0) {
+                  setSelectedStaffId(data.staff[0].id);
+                }
+                setCloudStatus('☁️ Synced');
+              } else {
+                // Initialize with default data if database is empty
+                saveToFirebase({
+                  staff: [{ id: 1, name: 'Staff Member 1', type: 'nepali' }],
+                  leaveData: {},
+                  extraHours: {},
+                  publicHolidays: {}
+                });
+              }
+              setIsLoading(false);
+            });
+
+            return () => dataRef.off();
+          }, []);
+
+          // Save data to Firebase
+          const saveToFirebase = (data) => {
+            if (!database) return;
+            
+            setCloudStatus('Saving...');
+            database.ref('leaveTracker').set(data)
+              .then(() => setCloudStatus('☁️ Synced'))
+              .catch((error) => {
+                console.error('Firebase save error:', error);
+                setCloudStatus('❌ Save failed');
+              });
+          };
+
+          // Auto-save to Firebase whenever data changes
+          useEffect(() => {
+            if (!isLoading && database) {
+              saveToFirebase({
+                staff,
+                leaveData,
+                extraHours,
+                publicHolidays
+              });
+            }
+          }, [staff, leaveData, extraHours, publicHolidays]);
+
+          const currentStaff = staff.find(s => s.id === selectedStaffId);
+
+          const getDaysInMonth = (month, year) => {
+            return new Date(year, month + 1, 0).getDate();
+          };
+
+          const getFirstDayOfMonth = (month, year) => {
+            return new Date(year, month, 1).getDay();
+          };
+
+          const getDateKey = (day) => {
+            return `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          };
+
+          const getStaffLeaveKey = (staffId, dateKey) => {
+            return `${staffId}-${dateKey}`;
+          };
+
+          const addStaff = () => {
+            const newId = Math.max(...staff.map(s => s.id), 0) + 1;
+            setStaff([...staff, { id: newId, name: `Staff Member ${newId}`, type: 'nepali' }]);
+          };
+
+          const removeStaff = (id) => {
+            if (staff.length === 1) {
+              alert('Cannot remove the last staff member');
+              return;
+            }
+            setStaff(staff.filter(s => s.id !== id));
+            if (selectedStaffId === id) {
+              setSelectedStaffId(staff.find(s => s.id !== id).id);
+            }
+          };
+
+          const updateStaff = (id, field, value) => {
+            setStaff(staff.map(s => s.id === id ? { ...s, [field]: value } : s));
+          };
+
+          const handleLeaveClick = (day, leaveType) => {
+            const dateKey = getDateKey(day);
+            const key = getStaffLeaveKey(selectedStaffId, dateKey);
+            
+            setLeaveData(prev => {
+              const newData = { ...prev };
+              if (newData[key] === leaveType) {
+                delete newData[key];
+              } else {
+                newData[key] = leaveType;
+              }
+              return newData;
+            });
+          };
+
+          const openExtraHoursModal = (day) => {
+            setSelectedDay(day);
+            setShowExtraHoursModal(true);
+          };
+
+          const saveExtraHours = (hours) => {
+            const dateKey = getDateKey(selectedDay);
+            const key = getStaffLeaveKey(selectedStaffId, dateKey);
+            
+            setExtraHours(prev => {
+              const newData = { ...prev };
+              if (hours === '' || hours === '0' || parseFloat(hours) === 0) {
+                delete newData[key];
+              } else {
+                newData[key] = parseFloat(hours);
+              }
+              return newData;
+            });
+            setShowExtraHoursModal(false);
+            setSelectedDay(null);
+          };
+
+          const togglePublicHoliday = (day, name = '') => {
+            const dateKey = getDateKey(day);
+            setPublicHolidays(prev => {
+              const newData = { ...prev };
+              if (newData[dateKey]) {
+                delete newData[dateKey];
+              } else {
+                const holidayName = name || prompt('Enter holiday name:');
+                if (holidayName) {
+                  newData[dateKey] = holidayName;
+                }
+              }
+              return newData;
+            });
+          };
+
+          const calculateLeaveSummary = (staffId) => {
+            const summary = {};
+            Object.keys(leaveTypes).forEach(type => {
+              summary[type] = 0;
+            });
+
+            Object.entries(leaveData).forEach(([key, type]) => {
+              if (key.startsWith(`${staffId}-`)) {
+                if (summary[type] !== undefined) {
+                  summary[type]++;
+                }
+              }
+            });
+
+            return summary;
+          };
+
+          const calculateCompensationDays = (staffId) => {
+            let totalHours = 0;
+            Object.entries(extraHours).forEach(([key, hours]) => {
+              if (key.startsWith(`${staffId}-`)) {
+                totalHours += hours;
+              }
+            });
+            return Math.floor(totalHours / 8);
+          };
+
+          const exportToCSV = () => {
+            let csv = 'Staff Name,Staff Type,Date,Leave Type,Extra Hours,Public Holiday\n';
+            
+            staff.forEach(staffMember => {
+              for (let month = 0; month < 12; month++) {
+                const daysInMonth = getDaysInMonth(month, currentYear);
+                for (let day = 1; day <= daysInMonth; day++) {
+                  const dateKey = `${currentYear}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                  const key = getStaffLeaveKey(staffMember.id, dateKey);
+                  
+                  const leaveType = leaveData[key] || '';
+                  const extraHour = extraHours[key] || 0;
+                  const holiday = publicHolidays[dateKey] || '';
+                  
+                  if (leaveType || extraHour > 0 || holiday) {
+                    csv += `${staffMember.name},${staffMember.type},${dateKey},${leaveType ? leaveTypes[leaveType].name : ''},${extraHour},${holiday}\n`;
+                  }
+                }
+              }
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `pbi-leave-tracker-${currentYear}.csv`;
+            a.click();
+          };
+
+          const renderCalendar = () => {
+            const daysInMonth = getDaysInMonth(currentMonth, currentYear);
+            const firstDay = getFirstDayOfMonth(currentMonth, currentYear);
+            const days = [];
+
+            for (let i = 0; i < firstDay; i++) {
+              days.push(React.createElement('div', { key: `empty-${i}`, className: "h-28 border border-gray-200 bg-gray-50" }));
+            }
+
+            for (let day = 1; day <= daysInMonth; day++) {
+              const dateKey = getDateKey(day);
+              const key = getStaffLeaveKey(selectedStaffId, dateKey);
+              const leaveType = leaveData[key];
+              const extraHour = extraHours[key] || 0;
+              const holiday = publicHolidays[dateKey];
+
+              days.push(
+                React.createElement('div', { key: day, className: "h-28 border border-gray-200 p-1 relative bg-white hover:bg-gray-50" },
+                  React.createElement('div', { className: "font-semibold text-sm mb-1 flex justify-between items-center" },
+                    React.createElement('span', {}, day),
+                    holiday && React.createElement('span', { className: "text-xs bg-yellow-200 px-1 rounded", title: holiday }, '🎉')
+                  ),
+                  leaveType && React.createElement('div', { className: `${leaveTypes[leaveType].color} text-white text-xs px-1 py-0.5 rounded mb-1 truncate` },
+                    leaveTypes[leaveType].name
+                  ),
+                  extraHour > 0 && React.createElement('div', { className: "bg-orange-500 text-white text-xs px-1 py-0.5 rounded mb-1 truncate" },
+                    `+${extraHour}h`
+                  ),
+                  React.createElement('div', { className: "absolute bottom-1 left-1 right-1 flex gap-1" },
+                    React.createElement('select', {
+                      value: leaveType || '',
+                      onChange: (e) => handleLeaveClick(day, e.target.value),
+                      className: "flex-1 text-xs bg-white border border-gray-300 rounded p-1"
+                    },
+                      React.createElement('option', { value: "" }, "No Leave"),
+                      Object.entries(leaveTypes).map(([k, { name }]) =>
+                        React.createElement('option', { key: k, value: k }, name)
+                      )
+                    ),
+                    React.createElement('button', {
+                      onClick: () => openExtraHoursModal(day),
+                      className: "text-xs bg-orange-500 text-white px-2 rounded hover:bg-orange-600",
+                      title: "Add extra hours"
+                    }, '+H')
+                  )
+                )
+              );
+            }
+
+            return days;
+          };
+
+          const summary = calculateLeaveSummary(selectedStaffId);
+          const compensationDays = calculateCompensationDays(selectedStaffId);
+
+          if (isLoading) {
+            return React.createElement('div', { className: "min-h-screen bg-gray-50 flex items-center justify-center" },
+              React.createElement('div', { className: "text-2xl font-bold text-gray-600" }, 'Loading...')
+            );
+          }
+
+          return React.createElement('div', { className: "min-h-screen bg-gray-50 p-4" },
+            React.createElement('div', { className: "max-w-7xl mx-auto" },
+              React.createElement('div', { className: "bg-white rounded-lg shadow-lg p-6 mb-6" },
+                React.createElement('div', { className: "flex items-center justify-between mb-6" },
+                  React.createElement('div', { className: "flex items-center gap-3" },
+                    React.createElement('h1', { className: "text-3xl font-bold text-gray-800" }, '📅 PBI Nepal Leave Tracker'),
+                    React.createElement('span', { className: "text-sm px-3 py-1 bg-green-100 text-green-800 rounded-full" }, cloudStatus)
+                  ),
+                  React.createElement('div', { className: "flex gap-2" },
+                    React.createElement('button', {
+                      onClick: () => setShowStaffManager(!showStaffManager),
+                      className: "flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+                    }, '👥 Staff'),
+                    React.createElement('button', {
+                      onClick: exportToCSV,
+                      className: "flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                    }, '📊 Export CSV')
+                  )
+                ),
+                
+                showStaffManager && React.createElement('div', { className: "mb-6 p-4 bg-purple-50 rounded" },
+                  React.createElement('div', { className: "flex justify-between items-center mb-3" },
+                    React.createElement('h2', { className: "text-xl font-bold" }, 'Staff Management'),
+                    React.createElement('button', {
+                      onClick: addStaff,
+                      className: "flex items-center gap-2 px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700"
+                    }, '➕ Add Staff')
+                  ),
+                  React.createElement('div', { className: "space-y-2" },
+                    staff.map(s =>
+                      React.createElement('div', { key: s.id, className: "flex gap-2 items-center bg-white p-2 rounded" },
+                        React.createElement('input', {
+                          type: "text",
+                          value: s.name,
+                          onChange: (e) => updateStaff(s.id, 'name', e.target.value),
+                          className: "flex-1 p-2 border border-gray-300 rounded"
+                        }),
+                        React.createElement('select', {
+                          value: s.type,
+                          onChange: (e) => updateStaff(s.id, 'type', e.target.value),
+                          className: "p-2 border border-gray-300 rounded"
+                        },
+                          React.createElement('option', { value: "nepali" }, "Nepali Staff"),
+                          React.createElement('option', { value: "international" }, "International Staff")
+                        ),
+                        React.createElement('button', {
+                          onClick: () => removeStaff(s.id),
+                          className: "p-2 bg-red-600 text-white rounded hover:bg-red-700"
+                        }, '🗑️')
+                      )
+                    )
+                  )
+                ),
+
+                React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-3 gap-4 mb-6" },
+                  React.createElement('div', {},
+                    React.createElement('label', { className: "block text-sm font-medium mb-2" }, 'Select Staff Member'),
+                    React.createElement('select', {
+                      value: selectedStaffId,
+                      onChange: (e) => setSelectedStaffId(parseInt(e.target.value)),
+                      className: "w-full p-2 border border-gray-300 rounded"
+                    },
+                      staff.map(s =>
+                        React.createElement('option', { key: s.id, value: s.id },
+                          `${s.name} (${s.type === 'nepali' ? 'Nepali' : 'International'})`
+                        )
+                      )
+                    )
+                  ),
+                  React.createElement('div', {},
+                    React.createElement('label', { className: "block text-sm font-medium mb-2" }, 'Month'),
+                    React.createElement('select', {
+                      value: currentMonth,
+                      onChange: (e) => setCurrentMonth(parseInt(e.target.value)),
+                      className: "w-full p-2 border border-gray-300 rounded"
+                    },
+                      months.map((month, index) =>
+                        React.createElement('option', { key: index, value: index }, month)
+                      )
+                    )
+                  ),
+                  React.createElement('div', {},
+                    React.createElement('label', { className: "block text-sm font-medium mb-2" }, 'Year'),
+                    React.createElement('input', {
+                      type: "number",
+                      value: currentYear,
+                      onChange: (e) => setCurrentYear(parseInt(e.target.value)),
+                      className: "w-full p-2 border border-gray-300 rounded"
+                    })
+                  )
+                ),
+
+                React.createElement('div', { className: "flex gap-2 mb-4" },
+                  React.createElement('button', {
+                    onClick: () => setShowSummary(!showSummary),
+                    className: "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  }, showSummary ? 'Hide Summary' : 'Show Summary'),
+                  React.createElement('button', {
+                    onClick: () => setShowHolidayManager(!showHolidayManager),
+                    className: "px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                  }, (showHolidayManager ? 'Hide' : 'Manage') + ' Public Holidays')
+                ),
+
+                showHolidayManager && React.createElement('div', { className: "mb-6 p-4 bg-yellow-50 rounded" },
+                  React.createElement('h2', { className: "text-xl font-bold mb-3" }, `Public Holidays for ${currentYear}`),
+                  React.createElement('p', { className: "text-sm text-gray-600 mb-3" }, 'Click "Add Public Holiday" button below to mark holidays'),
+                  React.createElement('div', { className: "space-y-2" },
+                    Object.entries(publicHolidays)
+                      .filter(([date]) => date.startsWith(currentYear.toString()))
+                      .map(([date, name]) =>
+                        React.createElement('div', { key: date, className: "flex justify-between items-center bg-white p-2 rounded" },
+                          React.createElement('span', {}, `${date}: ${name}`),
+                          React.createElement('button', {
+                            onClick: () => setPublicHolidays(prev => {
+                              const newData = { ...prev };
+                              delete newData[date];
+                              return newData;
+                            }),
+                            className: "text-red-600 hover:text-red-800"
+                          }, 'Remove')
+                        )
+                      )
+                  )
+                ),
+
+                showSummary && currentStaff && React.createElement('div', { className: "mb-6 p-4 bg-gray-100 rounded" },
+                  React.createElement('h2', { className: "text-xl font-bold mb-3" }, `Leave Summary for ${currentStaff.name} - ${currentYear}`),
+                  React.createElement('div', { className: "grid grid-cols-2 md:grid-cols-5 gap-3" },
+                    Object.entries(leaveTypes).map(([key, { name, maxNepali, maxIntl }]) => {
+                      const max = currentStaff.type === 'nepali' ? maxNepali : maxIntl;
+                      return React.createElement('div', { key, className: "bg-white p-3 rounded shadow" },
+                        React.createElement('div', { className: "text-xs text-gray-600" }, name),
+                        React.createElement('div', { className: "text-lg font-bold" },
+                          `${summary[key]} / ${max === 999 ? '∞' : max === 0 ? 'N/A' : max}`
+                        ),
+                        max !== 999 && max !== 0 && summary[key] > max &&
+                          React.createElement('div', { className: "text-xs text-red-600" }, 'Exceeded!')
+                      );
+                    })
+                  ),
+                  React.createElement('div', { className: "mt-3 p-3 bg-orange-100 rounded" },
+                    React.createElement('div', { className: "text-sm font-semibold" },
+                      `Extra Hours Worked: ${Object.entries(extraHours)
+                        .filter(([key]) => key.startsWith(`${selectedStaffId}-`))
+                        .reduce((sum, [, h]) => sum + h, 0)
+                        .toFixed(1)} hours`
+                    ),
+                    React.createElement('div', { className: "text-sm" }, `Compensation Days Earned: ${compensationDays} days`)
+                  )
+                ),
+
+                React.createElement('div', { className: "mb-4 flex justify-between items-center" },
+                  React.createElement('h2', { className: "text-2xl font-bold" }, `${months[currentMonth]} ${currentYear}`),
+                  React.createElement('button', {
+                    onClick: () => {
+                      const day = parseInt(prompt('Enter day number to mark as public holiday:'));
+                      if (day >= 1 && day <= getDaysInMonth(currentMonth, currentYear)) {
+                        togglePublicHoliday(day);
+                      }
+                    },
+                    className: "px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm"
+                  }, 'Add Public Holiday')
+                ),
+
+                React.createElement('div', { className: "grid grid-cols-7 gap-0 mb-4" },
+                  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day =>
+                    React.createElement('div', { key: day, className: "font-bold text-center p-2 bg-gray-200 border border-gray-300" }, day)
+                  )
+                ),
+
+                React.createElement('div', { className: "grid grid-cols-7 gap-0" },
+                  ...renderCalendar()
+                ),
+
+                React.createElement('div', { className: "mt-6 p-4 bg-blue-50 rounded" },
+                  React.createElement('h3', { className: "font-bold mb-2" }, '✨ Cloud Storage Enabled!'),
+                  React.createElement('ul', { className: "text-sm space-y-1" },
+                    React.createElement('li', {}, '• All changes are automatically saved to the cloud'),
+                    React.createElement('li', {}, '• All staff members see the same data in real-time'),
+                    React.createElement('li', {}, '• No need to manually save or load files'),
+                    React.createElement('li', {}, '• Select leave type for any day using the dropdown'),
+                    React.createElement('li', {}, '• Click "+H" to add extra hours worked'),
+                    React.createElement('li', {}, '• Use "Export CSV" to download reports for Excel')
+                  )
+                )
+              )
+            ),
+
+            showExtraHoursModal && React.createElement('div', { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" },
+              React.createElement('div', { className: "bg-white rounded-lg p-6 max-w-md w-full" },
+                React.createElement('h3', { className: "text-xl font-bold mb-4" },
+                  `Extra Hours for ${months[currentMonth]} ${selectedDay}, ${currentYear}`
+                ),
+                React.createElement('input', {
+                  type: "number",
+                  step: "0.5",
+                  min: "0",
+                  max: "24",
+                  defaultValue: extraHours[getStaffLeaveKey(selectedStaffId, getDateKey(selectedDay))] || 0,
+                  className: "w-full p-2 border border-gray-300 rounded mb-4",
+                  id: "extraHoursInput",
+                  autoFocus: true
+                }),
+                React.createElement('div', { className: "flex gap-2 justify-end" },
+                  React.createElement('button', {
+                    onClick: () => {
+                      setShowExtraHoursModal(false);
+                      setSelectedDay(null);
+                    },
+                    className: "px-4 py-2 bg-gray-300 rounded hover:bg-gray-400"
+                  }, 'Cancel'),
+                  React.createElement('button', {
+                    onClick: () => {
+                      const input = document.getElementById('extraHoursInput');
+                      saveExtraHours(input.value);
+                    },
+                    className: "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  }, 'Save')
+                )
+              )
+            )
+          );
+        };
+
+        ReactDOM.render(React.createElement(PBI_LEAVE_TRACKER), document.getElementById('root'));
+    </script>
+</body>
+</html>
